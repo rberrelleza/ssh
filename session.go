@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -93,6 +92,8 @@ func DefaultSessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.Ne
 		ptyCb:     srv.PtyCallback,
 		sessReqCb: srv.SessionRequestCallback,
 		ctx:       ctx,
+
+		subsystemHandlers: srv.SubsystemHandlers,
 	}
 	sess.handleRequests(reqs)
 }
@@ -113,21 +114,24 @@ type session struct {
 	ctx       Context
 	sigCh     chan<- Signal
 	sigBuf    []Signal
+
+	subsystemHandlers map[string]SubsystemHandler
 }
 
 func (sess *session) Write(p []byte) (n int, err error) {
-	if sess.pty != nil {
-		m := len(p)
-		// normalize \n to \r\n when pty is accepted.
-		// this is a hardcoded shortcut since we don't support terminal modes.
-		p = bytes.Replace(p, []byte{'\n'}, []byte{'\r', '\n'}, -1)
-		p = bytes.Replace(p, []byte{'\r', '\r', '\n'}, []byte{'\r', '\n'}, -1)
-		n, err = sess.Channel.Write(p)
-		if n > m {
-			n = m
-		}
-		return
-	}
+	// If change the \n to \r\n, then zmodem(rzsz) will be error
+	//if sess.pty != nil {
+	//	m := len(p)
+	//	// normalize \n to \r\n when pty is accepted.
+	//	// this is a hardcoded shortcut since we don't support terminal modes.
+	//	p = bytes.Replace(p, []byte{'\n'}, []byte{'\r', '\n'}, -1)
+	//	p = bytes.Replace(p, []byte{'\r', '\r', '\n'}, []byte{'\r', '\n'}, -1)
+	//	n, err = sess.Channel.Write(p)
+	//	if n > m {
+	//		n = m
+	//	}
+	//	return
+	//}
 	return sess.Channel.Write(p)
 }
 
@@ -314,6 +318,21 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 			// TODO: option/callback to allow agent forwarding
 			SetAgentRequested(sess.ctx)
 			req.Reply(true, nil)
+		case "subsystem":
+			subname := string(req.Payload[4:])
+			handler, ok := sess.subsystemHandlers[subname]
+			if !ok {
+				req.Reply(false, nil)
+				continue
+			}
+			sess.handled = true
+			req.Reply(true, nil)
+
+			go func() {
+				handler(sess)
+				sess.Exit(0)
+			}()
+
 		default:
 			// TODO: debug log
 			req.Reply(false, nil)

@@ -57,6 +57,8 @@ type Server struct {
 	// no handlers are enabled.
 	RequestHandlers map[string]RequestHandler
 
+	SubsystemHandlers map[string]SubsystemHandler
+
 	listenerWg sync.WaitGroup
 	mu         sync.Mutex
 	listeners  map[net.Listener]struct{}
@@ -391,4 +393,8 @@ func (srv *Server) trackConn(c *gossh.ServerConn, add bool) {
 		delete(srv.conns, c)
 		srv.connWg.Done()
 	}
+}
+
+func (srv *Server) SetSubsystemHandler(name string, handler SubsystemHandler) {
+	srv.SubsystemHandlers[name] = handler
 }
